@@ -1,236 +1,270 @@
 #include "readstream.h"
+#include <vector>
 
-bool load_resolution(std::istream &io)
+struct PSDLayerChannel
 {
-  skip(io, 16);
-  return true;
-}
+  PSDLayerChannel()
+    : size(0)
+  {}
+  unsigned long size;  
+};
 
-bool load_psd_header(std::istream &io)
+struct PSDLayer
 {
-  //------------------------------------------------------------//
-  // header
-  //------------------------------------------------------------//
-  std::cout << "[psd header(26bytes)]" << std::endl;
+  enum CHANNEL_TYPE {
+    CHANNEL_RED,
+    CHANNEL_GREEN,
+    CHANNEL_BLUE,
+    CHANNEL_ALPHA,
+    CHANNEL_MASK,
+  };
+  unsigned long top;
+  unsigned long left;
+  unsigned long bottom;
+  unsigned long right;
+  PSDLayerChannel channels[5];
+  std::string blend_mode;
+  unsigned char opacity;
+  unsigned char clipping;
+  unsigned char flags;
+  unsigned char padding;
+  unsigned long extra;
+  std::string name;
+};
 
-  // file id
-  std::string id=read_string(io, 4);
-  if(id!="8BPS"){
-    std::cout << "invalid File ID(8BPS)" << std::endl;
-    return false;
+class PSDLoader : public StreamLoader
+{
+  enum STATUS {
+    STATUS_UNKNOWN,
+    STATUS_INVALID_8BPS,
+    STATUS_INVALID_BLEND_MODE_SIGNATURE,
+  };
+  STATUS status_;
+
+  // first 26 bytes
+  unsigned short version_;
+  unsigned short channels_;
+
+  unsigned long height_;
+  unsigned long width_;
+  unsigned short depth_;
+  unsigned short mode_;
+
+  std::vector<PSDLayer> layers_;
+public:
+  PSDLoader(std::istream &io)
+    : StreamLoader(io), status_(STATUS_UNKNOWN)
+    {
+      if(!load_header_()){
+        return;
+      }
+
+      if(!load_color_mode_data_block_()){
+        return;
+      }
+
+      if(!load_image_resource_blocks_()){
+        return;
+      }
+
+      if(!load_layers_()){
+        return;
+      }
+
+      if(!load_rawdata()){
+        return;
+      }
+    }
+
+  typedef std::vector<PSDLayer>::iterator layerIterator;
+  layerIterator begin(){ return layers_.begin(); }
+  layerIterator end(){ return layers_.end(); }
+
+private:
+  //------------------------------------------------------------//
+  // psd header(26 bytes)
+  //------------------------------------------------------------//
+  bool load_header_()
+  {
+    // file id
+    std::string id=read_string_(4);
+    if(id!="8BPS"){
+      status_=STATUS_INVALID_8BPS;
+      return false;
+    }
+
+    // version
+    version_=read_word_();
+
+    skip_(6);
+
+    // channels
+    channels_=read_word_();
+
+    // height
+    height_=read_long_();
+    // width
+    width_=read_long_();
+    // depth
+    depth_=read_word_();
+    // mode
+    mode_=read_word_();
+
+    return true;
   }
-
-  // version
-  unsigned short version=read_word(io);
-  std::cout << "version " << version << std::endl;
-
-  skip(io, 6);
-
-  // channels
-  unsigned short channels=read_word(io);
-  std::cout << "channels " << channels << std::endl;
-
-  // height
-  unsigned long height=read_long(io);
-  // width
-  unsigned long width=read_long(io);
-  // depth
-  unsigned short depth=read_word(io);
-  std::cout << width << 'x' << height << ' ' << depth << std::endl;
-
-  // mode
-  unsigned short mode=read_word(io);
-  std::cout << "mode " << mode << std::endl;
 
   //------------------------------------------------------------//
   // color mode data block
   //------------------------------------------------------------//
-  //std::cout << "[color mode data block]" << std::endl;
-  switch(mode)
+  bool load_color_mode_data_block_()
   {
-  case 2:
-    // index
-    assert(false);
-    break;
-  case 8:
-    // duo tone
-    assert(false);
-    break;
-  default:    
-    skip(io, 4);
-  }
-
-  unsigned long header_size=read_long(io);
-  std::cout << "header size: " << header_size << std::endl;
-
-  while(io){
-    if(io.tellg()%2){
-      skip(io, 1);
-    }
-
-    if(io.peek()!='8'){
-      break;
-    }
-
-    //------------------------------------------------------------//
-    // image resource block
-    //------------------------------------------------------------//
-    //std::cout << "[image reosurce block]" << std::endl;
-    if(read_string(io, 4)!="8BIM"){
-      std::cout << "invalid resource block" << std::endl;
-      return false;
-    }
-
-    unsigned short res_id=read_word(io);
-    //std::cout << "resouce id 0x" << std::hex << res_id << std::dec << std::endl;
-
-    std::string name=read_string(io);
-    if(name==""){
-      skip(io, 1);
-    }
-
-    unsigned long res_size=read_long(io);
-    //std::cout << "size " << res_size << std::endl;
-
-    switch(res_id)
+    //std::cout << "[color mode data block]" << std::endl;
+    switch(mode_)
     {
-      case 0x03ed:
-        // resolution information
-        assert(res_size==16);
-        load_resolution(io);
-        break;
+    case 2:
+      // index
+      assert(false);
+      break;
 
-      default:
-        //std::cout << "unknown resouce id" << std::endl;
-        skip(io, res_size);
+    case 8:
+      // duo tone
+      assert(false);
+      break;
+
+    default:    
+      skip_(4);
     }
+
+    return true;
   }
 
-  return true;
-}
-
-bool load_psd_layer(std::istream &io)
-{
-  std::cout << "[layer and mask information block]" << std::endl;
-  unsigned long layer_and_mask_size=read_long(io);
-  unsigned long layer_block_size=read_long(io);
-  std::cout << "layer and mask(" << layer_and_mask_size << ")"
-    << "layers size(" << layer_block_size << ")" << std::endl;
-
-  //  layers
-  short layer_count=read_short(io);
-  if(layer_count<0){
-    layer_count*=-1;
+  //------------------------------------------------------------//
+  // image resource blocks
+  //------------------------------------------------------------//
+  bool load_image_resource_blocks_()
+  {
+    unsigned long header_size=read_long_();
+    skip_(header_size);
+    return true;
   }
-  std::cout << layer_count << " layers" << std::endl;
 
-  for(int i=0; io && i<layer_count; ++i){
-    std::cout << "(" << i << ")";
-    // each layer
-    unsigned long top=read_long(io);
-    unsigned long left=read_long(io);
-    unsigned long bottom=read_long(io);
-    unsigned long right=read_long(io);
-    std::cout 
-      << "[" << left << ", " << top << "]"
-      << " - "
-      << "[" << right << ", " << bottom << "]"
-      ;
+  //------------------------------------------------------------//
+  // layer and mask information blocks
+  //------------------------------------------------------------//
+  bool load_layers_()
+  {
+    unsigned long layer_and_mask_size=read_long_();
+    unsigned long layer_block_size=read_long_();
 
-    unsigned short channels=read_word(io);
-    for(int j=0; io && j<channels; ++j){
-      // each channel
-      unsigned short channel_id=read_word(io);
-      unsigned long channel_size=read_long(io);
+    //  layers
+    short layer_count=read_short_();
+    if(layer_count<0){
+      layer_count*=-1;
     }
 
-    // blend mode
-    if(read_string(io, 4)!="8BIM"){
-      std::cout << "invalid blend mode signature" << std::endl;
-      return false;
-    }
-    std::string key=read_string(io, 4);
-    unsigned char opacity=read_byte(io);
-    unsigned char clipping=read_byte(io);
-    unsigned char flags=read_byte(io);
-    unsigned char padding=read_byte(io);
-    unsigned long extra=read_long(io);
+    for(int i=0; i<layer_count; ++i){
+      // each layer
+      PSDLayer layer;
+      layer.top=read_long_();
+      layer.left=read_long_();
+      layer.bottom=read_long_();
+      layer.right=read_long_();
 
-    // layer mask section
-    unsigned long layer_mask_size=read_long(io);
-    if(layer_mask_size){
-      unsigned long top=read_long(io);
-      unsigned long left=read_long(io);
-      unsigned long bottom=read_long(io);
-      unsigned long right=read_long(io);
-      unsigned char color=read_byte(io);
-      unsigned char flags=read_byte(io);
-      unsigned short padding=read_byte(io);
-      std::cout << "layer mask "
-        << left << ", " << top
-        << " - " << right << ", " << bottom
-        ;
-    }
+      unsigned short channels=read_word_();
+      assert(channels<=5);
+      for(int j=0; j<channels; ++j){
+        // each channel
+        short channel_id=read_short_();
+        unsigned long channel_size=read_long_();
 
-    // blending range
-    unsigned long blending_size=read_long(io);
-    skip(io, blending_size);
-
-    // layer name
-    std::string name=read_string(io);
-    if(name[0]=='\n' || name[0]=='r'){
-      std::cout << name.c_str()+1 << '#' << key;
-    }
-    else{
-      std::cout << name << '#' << key;
-    }
-    if(io.tellg()%2){
-      skip(io, 1);
-    }
-
-    while(io){
-      if(io.peek()!='8'){
-        break;
+        switch(channel_id)
+        {
+        case 0:
+          layer.channels[PSDLayer::CHANNEL_RED].size=channel_size;
+          break;
+        case 1:
+          layer.channels[PSDLayer::CHANNEL_GREEN].size=channel_size;
+          break;
+        case 2:
+          layer.channels[PSDLayer::CHANNEL_BLUE].size=channel_size;
+          break;
+        case -1:
+          layer.channels[PSDLayer::CHANNEL_ALPHA].size=channel_size;
+          break;
+        case -2:
+          layer.channels[PSDLayer::CHANNEL_MASK].size=channel_size;
+          break;
+        }
       }
-      if(read_string(io, 4)!="8BIM"){
-        std::cout << "not found 8BIM" << std::endl;
+
+      // blend mode
+      if(read_string_(4)!="8BIM"){
+        status_=STATUS_INVALID_BLEND_MODE_SIGNATURE;
         return false;
       }
-      std::string key=read_string(io, 4);
-      std::cout << "[" << key << "]";
-      unsigned long size=read_long(io);
-      skip(io, size);
+      layer.blend_mode=read_string_(4);
+      layer.opacity=read_byte_();
+      layer.clipping=read_byte_();
+      layer.flags=read_byte_();
+      layer.padding=read_byte_();
+      unsigned long extra=read_long_();
+      std::ios::pos_type layer_end=tellg_()
+        +static_cast<std::ios::pos_type>(extra);
+
+      // layer mask section
+      unsigned long layer_mask_size=read_long_();
+      if(layer_mask_size){
+        unsigned long top=read_long_();
+        unsigned long left=read_long_();
+        unsigned long bottom=read_long_();
+        unsigned long right=read_long_();
+        unsigned char color=read_byte_();
+        unsigned char flags=read_byte_();
+        unsigned short padding=read_byte_();
+      }
+
+      // blending range
+      unsigned long blending_size=read_long_();
+      skip_(blending_size);
+
+      // layer name
+      layer.name=read_string_();
+      // skip odd byte
+      if(tellg_()%2){
+        skip_(1);
+      }
+
+      skip_to_(layer_end);
+
+      layers_.push_back(layer);
     }
-    std::cout << std::endl;
+    return true;
   }
 
-  return true;
-}
+  //------------------------------------------------------------//
+  // raw data
+  //------------------------------------------------------------//
+  bool load_rawdata()
+  {
+    for(layerIterator layer=begin(); layer!=end(); ++layer){
+      //InterleavedImage image;
+      std::cout << "[" << layer->name << "]" << std::endl;
+      // each layer
+      for(int i=0; i<5; ++i){
+        // each channel
+        PSDLayerChannel &channel=layer->channels[i];
+        if(channel.size==0){
+          continue;
+        }
+        std::cout << i << ',' << channel.size << " bytes" << std::endl;
+      }
+    }
 
-bool load_psd_rawdata(std::istream &io)
-{
-  unsigned short compressed=read_word(io);
-  std::cout << "compressed: " << compressed << std::endl;
+    // image
 
-  return true;
-}
-
-bool load_psd(std::istream &io)
-{
-  if(!load_psd_header(io)){
-    return false;
+    return true;
   }
-
-  if(!load_psd_layer(io)){
-    return false;
-  }
-
-  if(!load_psd_rawdata(io)){
-    return false;
-  }
-
-  return true;
-}
+};
 
 int main(int argc, char** argv)
 {
@@ -245,12 +279,8 @@ int main(int argc, char** argv)
     return 2;
   }
 
-  if(!load_psd(io)){
-    std::cout << "fail to load psd" << std::endl;
-    return 3;
-  }
+  PSDLoader loader(io);
 
-  std::cout << "success" << std::endl;
   return 0;
 }
 
