@@ -15,39 +15,29 @@ std::string string_format(const char* format, ...)
   return buf;
 }
 
-struct RGBA
-{
-  unsigned char r;
-  unsigned char g;
-  unsigned char b;
-  unsigned char a;
+enum CHANNEL_TYPE {
+  CHANNEL_ALPHA,
+  CHANNEL_RED,
+  CHANNEL_GREEN,
+  CHANNEL_BLUE,
+  CHANNEL_MASK,
 };
 
+#define TO_SHORT(buf) (buf[0]<<8|buf[1])
 class Image
 {
   int width_;
   int height_;
-  std::vector<RGBA> data_;
+  std::vector<unsigned char> data_;
 
 public:
   Image(int w, int h)
     : width_(w), height_(h)
     {
-      data_.resize(w*h);
+      data_.resize(w*h*4);
     }
 
   typedef std::vector<unsigned char>::iterator iterator;
-
-  void set_plane(int channel, const std::vector<unsigned char> &buf)
-  {
-    if(buf[0] || buf[1]){
-      set_compressed_plane_((unsigned short*)&buf[2], 
-          (buf.size()-2)/sizeof(unsigned short));
-    }
-    else{
-      set_plane_(&buf[2], buf.size()-2);
-    }
-  }
 
   bool write_ppm(const std::string &path)
   {
@@ -64,30 +54,116 @@ public:
       ;
 
     // raw data
-    io.write((char*)&data_[0], data_.size());
+    char *current=(char*)&data_[0];
+    for(int y=0; y<height_; ++y){
+      for(int x=0; x<width_; ++x, current+=4){
+        io.write(current, 3);
+      }
+    }
 
     return true;
   }
 
-private:
-  void set_compressed_plane_(const unsigned short *buf, size_t size)
+  void set_plane(CHANNEL_TYPE channel, const std::vector<unsigned char> &buf)
   {
+    short compressed=TO_SHORT(buf);
+    switch(compressed)
+    {
+    case 0:
+      set_plane_(channel, &buf[0]+2, &buf[0]+buf.size());
+      break;
+    case 1:
+      set_compressed_plane_(channel, &buf[0]+2, &buf[0]+buf.size());
+      break;
+
+    default:
+      //assert(false);
+      std::cout << "unknown compression" << std::endl;
+    }
   }
 
-  void set_plane_(const unsigned char *buf, size_t size)
+private:
+  void set_compressed_plane_(CHANNEL_TYPE channel, 
+      const unsigned char *buf, const unsigned char *end)
   {
+    std::cout << "set_compressed_plane_" << std::endl;
+    const unsigned char *src=buf;
+
+    unsigned short line_length[height_];
+    for(int y=0; y<height_; ++y, src+=2)
+    {
+      line_length[y]=TO_SHORT(src);
+    }
+
+    unsigned char *dst=get_interleaved_head_(channel);
+    for(int y=0; y<height_; ++y){
+      const unsigned char *line_end=src+line_length[y];
+      int x;
+      for(x=0; x<width_;){
+        if(src>=line_end){
+          break;
+        }
+        if(*src & 0x80){
+          // continuos
+          int pack_length=-((char)*src)+1;
+          ++src;
+          assert(pack_length<=128);
+          unsigned char value=*src;
+          ++src;
+          assert(src<=line_end);
+          for(int i=0; i<pack_length; ++i, dst+=4, ++x){
+            *dst=value;                  
+          }
+        }
+        else{
+          // not continious
+          int pack_length=*src+1;
+          ++src;
+          assert(pack_length<=128);
+          for(int i=0; i<pack_length; ++i, dst+=4, ++src, ++x){
+            *dst=*src;
+            assert(src<=line_end);
+          }
+        }
+      }
+      assert(x==width_);
+      src=line_end;
+    }
   }
+
+  void set_plane_(CHANNEL_TYPE channel,
+      const unsigned char *begin, const unsigned char *end)
+  {
+    unsigned char *dst=get_interleaved_head_(channel);
+    const unsigned char* src=begin;
+    for(int y=0; y<height_; ++y){
+      for(int x=0; x<width_; ++x, ++src, dst+=4){
+        *dst=*src;
+      }
+    }
+  }
+
+  unsigned char *get_interleaved_head_(CHANNEL_TYPE channel)
+  {
+    switch(channel){
+    case CHANNEL_RED:
+      return &data_[0];
+    case CHANNEL_GREEN:
+      return &data_[1];
+    case CHANNEL_BLUE:
+      return &data_[2];
+    case CHANNEL_ALPHA:
+      return &data_[3];
+    default:
+      assert(false);
+      return NULL;
+    }
+  }
+
 };
 
 struct PSDLayer
 {
-  enum CHANNEL_TYPE {
-    CHANNEL_RED,
-    CHANNEL_GREEN,
-    CHANNEL_BLUE,
-    CHANNEL_ALPHA,
-    CHANNEL_MASK,
-  };
   unsigned long top;
   unsigned long left;
   unsigned long bottom;
@@ -117,6 +193,7 @@ inline std::ostream& operator<<(std::ostream &os, const PSDLayer &rhs)
     << "{" 
     << rhs.left << ',' << rhs.top
     << ' ' << (rhs.right-rhs.left) << 'x' << (rhs.bottom-rhs.top)
+    << ' ' << rhs.channels
     << "}"
     ;
 }
@@ -251,12 +328,12 @@ private:
       layer_count*=-1;
     }
 
-std::cout 
-  << layer_and_mask_size 
-  << ',' << layer_block_size 
-  << ',' << layer_count
-  << std::endl
-  ;
+    std::cout 
+      << layer_and_mask_size 
+      << ',' << layer_block_size 
+      << ',' << layer_count
+      << std::endl
+      ;
 
     for(int i=0; i<layer_count; ++i){
       // each layer
@@ -276,20 +353,23 @@ std::cout
         switch(channel_id)
         {
         case 0:
-          layer.channel_size[PSDLayer::CHANNEL_RED]=channel_size;
+          layer.channel_size[CHANNEL_RED]=channel_size;
           break;
         case 1:
-          layer.channel_size[PSDLayer::CHANNEL_GREEN]=channel_size;
+          layer.channel_size[CHANNEL_GREEN]=channel_size;
           break;
         case 2:
-          layer.channel_size[PSDLayer::CHANNEL_BLUE]=channel_size;
+          layer.channel_size[CHANNEL_BLUE]=channel_size;
           break;
         case -1:
-          layer.channel_size[PSDLayer::CHANNEL_ALPHA]=channel_size;
+          layer.channel_size[CHANNEL_ALPHA]=channel_size;
           break;
         case -2:
-          layer.channel_size[PSDLayer::CHANNEL_MASK]=channel_size;
+          layer.channel_size[CHANNEL_MASK]=channel_size;
           break;
+        default:
+          std::cout << "unknown channel id: " << channel_id << std::endl;
+          assert(false);
         }
       }
 
@@ -344,26 +424,29 @@ std::cout
   {
     int i=1;
     for(layerIterator layer=begin(); layer!=end(); ++layer){
-std::cout << *layer << std::endl;
+      std::cout << *layer << std::endl;
       // each layer
       if(layer->channels){
         Image image(layer->right-layer->left, 
             layer->bottom-layer->top);
 
         // each channel
-        image.set_plane(PSDLayer::CHANNEL_RED, read_vector_(
-              layer->channel_size[PSDLayer::CHANNEL_RED]));
-        image.set_plane(PSDLayer::CHANNEL_GREEN, read_vector_(
-              layer->channel_size[PSDLayer::CHANNEL_GREEN]));
-        image.set_plane(PSDLayer::CHANNEL_BLUE, read_vector_(
-              layer->channel_size[PSDLayer::CHANNEL_BLUE]));
-        image.set_plane(PSDLayer::CHANNEL_ALPHA, read_vector_(
-              layer->channel_size[PSDLayer::CHANNEL_ALPHA]));
+        image.set_plane(CHANNEL_ALPHA, read_vector_(
+              layer->channel_size[CHANNEL_ALPHA]));
+
+        image.set_plane(CHANNEL_RED, read_vector_(
+              layer->channel_size[CHANNEL_RED]));
+
+        image.set_plane(CHANNEL_GREEN, read_vector_(
+              layer->channel_size[CHANNEL_GREEN]));
+
+        image.set_plane(CHANNEL_BLUE, read_vector_(
+              layer->channel_size[CHANNEL_BLUE]));
 
         // write to file
         image.write_ppm(string_format("%02d.ppm", i++));
 
-        if(i>2){
+        if(i>5){
           break;
         }
       }

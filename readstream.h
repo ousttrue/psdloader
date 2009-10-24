@@ -41,6 +41,14 @@ protected:
     io_.seekg(bytes, std::ios::cur);
   }
 
+  void skip_4_bound_()
+  {
+    int remain=tellg_()%4;
+    if(remain){
+      skip_(4-remain);
+    }
+  }
+
   std::string read_string_()
   {
     std::stringstream ss;
