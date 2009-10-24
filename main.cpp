@@ -1,12 +1,82 @@
 #include "readstream.h"
-#include <vector>
 
-struct PSDLayerChannel
+#include <vector>
+#include <stdarg.h>
+#include <string>
+
+std::string string_format(const char* format, ...)
 {
-  PSDLayerChannel()
-    : size(0)
-  {}
-  unsigned long size;  
+  va_list ap;
+  va_start(ap, format);
+  char buf[1024];
+  vsprintf(buf, format, ap);
+  va_end(ap);
+
+  return buf;
+}
+
+struct RGBA
+{
+  unsigned char r;
+  unsigned char g;
+  unsigned char b;
+  unsigned char a;
+};
+
+class Image
+{
+  int width_;
+  int height_;
+  std::vector<RGBA> data_;
+
+public:
+  Image(int w, int h)
+    : width_(w), height_(h)
+    {
+      data_.resize(w*h);
+    }
+
+  typedef std::vector<unsigned char>::iterator iterator;
+
+  void set_plane(int channel, const std::vector<unsigned char> &buf)
+  {
+    if(buf[0] || buf[1]){
+      set_compressed_plane_((unsigned short*)&buf[2], 
+          (buf.size()-2)/sizeof(unsigned short));
+    }
+    else{
+      set_plane_(&buf[2], buf.size()-2);
+    }
+  }
+
+  bool write_ppm(const std::string &path)
+  {
+    std::ofstream io(path.c_str(), std::ios::binary);
+    if(!io){
+      return false;
+    }
+
+    // header
+    io
+      << "P6\n"
+      << width_ << ' ' << height_ << '\n'
+      << 255 << '\n'
+      ;
+
+    // raw data
+    io.write((char*)&data_[0], data_.size());
+
+    return true;
+  }
+
+private:
+  void set_compressed_plane_(const unsigned short *buf, size_t size)
+  {
+  }
+
+  void set_plane_(const unsigned char *buf, size_t size)
+  {
+  }
 };
 
 struct PSDLayer
@@ -22,15 +92,34 @@ struct PSDLayer
   unsigned long left;
   unsigned long bottom;
   unsigned long right;
-  PSDLayerChannel channels[5];
+  unsigned short channels;
+  unsigned long channel_size[5];
   std::string blend_mode;
   unsigned char opacity;
   unsigned char clipping;
   unsigned char flags;
   unsigned char padding;
-  unsigned long extra;
   std::string name;
+
+  PSDLayer()
+    : top(0), left(0), bottom(0), right(0), channels(0)
+    {
+      channel_size[0]=0;
+      channel_size[1]=0;
+      channel_size[2]=0;
+      channel_size[3]=0;
+      channel_size[4]=0;
+    }
 };
+inline std::ostream& operator<<(std::ostream &os, const PSDLayer &rhs)
+{
+  os
+    << "{" 
+    << rhs.left << ',' << rhs.top
+    << ' ' << (rhs.right-rhs.left) << 'x' << (rhs.bottom-rhs.top)
+    << "}"
+    ;
+}
 
 class PSDLoader : public StreamLoader
 {
@@ -162,6 +251,13 @@ private:
       layer_count*=-1;
     }
 
+std::cout 
+  << layer_and_mask_size 
+  << ',' << layer_block_size 
+  << ',' << layer_count
+  << std::endl
+  ;
+
     for(int i=0; i<layer_count; ++i){
       // each layer
       PSDLayer layer;
@@ -169,10 +265,10 @@ private:
       layer.left=read_long_();
       layer.bottom=read_long_();
       layer.right=read_long_();
+      layer.channels=read_word_();
 
-      unsigned short channels=read_word_();
-      assert(channels<=5);
-      for(int j=0; j<channels; ++j){
+      assert(layer.channels<=5);
+      for(int j=0; j<layer.channels; ++j){
         // each channel
         short channel_id=read_short_();
         unsigned long channel_size=read_long_();
@@ -180,19 +276,19 @@ private:
         switch(channel_id)
         {
         case 0:
-          layer.channels[PSDLayer::CHANNEL_RED].size=channel_size;
+          layer.channel_size[PSDLayer::CHANNEL_RED]=channel_size;
           break;
         case 1:
-          layer.channels[PSDLayer::CHANNEL_GREEN].size=channel_size;
+          layer.channel_size[PSDLayer::CHANNEL_GREEN]=channel_size;
           break;
         case 2:
-          layer.channels[PSDLayer::CHANNEL_BLUE].size=channel_size;
+          layer.channel_size[PSDLayer::CHANNEL_BLUE]=channel_size;
           break;
         case -1:
-          layer.channels[PSDLayer::CHANNEL_ALPHA].size=channel_size;
+          layer.channel_size[PSDLayer::CHANNEL_ALPHA]=channel_size;
           break;
         case -2:
-          layer.channels[PSDLayer::CHANNEL_MASK].size=channel_size;
+          layer.channel_size[PSDLayer::CHANNEL_MASK]=channel_size;
           break;
         }
       }
@@ -212,8 +308,8 @@ private:
         +static_cast<std::ios::pos_type>(extra);
 
       // layer mask section
-      unsigned long layer_mask_size=read_long_();
-      if(layer_mask_size){
+      unsigned long mask_size=read_long_();
+      if(mask_size){
         unsigned long top=read_long_();
         unsigned long left=read_long_();
         unsigned long bottom=read_long_();
@@ -246,21 +342,32 @@ private:
   //------------------------------------------------------------//
   bool load_rawdata()
   {
+    int i=1;
     for(layerIterator layer=begin(); layer!=end(); ++layer){
-      //InterleavedImage image;
-      std::cout << "[" << layer->name << "]" << std::endl;
+std::cout << *layer << std::endl;
       // each layer
-      for(int i=0; i<5; ++i){
+      if(layer->channels){
+        Image image(layer->right-layer->left, 
+            layer->bottom-layer->top);
+
         // each channel
-        PSDLayerChannel &channel=layer->channels[i];
-        if(channel.size==0){
-          continue;
+        image.set_plane(PSDLayer::CHANNEL_RED, read_vector_(
+              layer->channel_size[PSDLayer::CHANNEL_RED]));
+        image.set_plane(PSDLayer::CHANNEL_GREEN, read_vector_(
+              layer->channel_size[PSDLayer::CHANNEL_GREEN]));
+        image.set_plane(PSDLayer::CHANNEL_BLUE, read_vector_(
+              layer->channel_size[PSDLayer::CHANNEL_BLUE]));
+        image.set_plane(PSDLayer::CHANNEL_ALPHA, read_vector_(
+              layer->channel_size[PSDLayer::CHANNEL_ALPHA]));
+
+        // write to file
+        image.write_ppm(string_format("%02d.ppm", i++));
+
+        if(i>2){
+          break;
         }
-        std::cout << i << ',' << channel.size << " bytes" << std::endl;
       }
     }
-
-    // image
 
     return true;
   }

@@ -4,11 +4,13 @@
 #include <string>
 #include <cstring>
 #include <cassert>
+#include <vector>
 
 class StreamLoader
 {
   std::istream &io_;
   std::ios::pos_type start_;
+  std::vector<unsigned char> buf_;
 
 public:
   StreamLoader(std::istream &io)
@@ -54,9 +56,16 @@ protected:
 
   std::string read_string_(int bytes)
   {
-    char buf[bytes];
-    io_.read(buf, bytes);
-    return std::string(buf, buf+bytes);
+    buf_.resize(bytes);
+    io_.read((char*)&buf_[0], bytes);
+    return std::string(buf_.begin(), buf_.end());
+  }
+
+  const std::vector<unsigned char> &read_vector_(int bytes)
+  {
+    buf_.resize(bytes);
+    io_.read((char*)&buf_[0], bytes);
+    return buf_;
   }
 
   unsigned short read_word_()
