@@ -411,8 +411,9 @@ private:
   //------------------------------------------------------------//
   bool load_rawdata()
   {
-    int i=1;
-    for(layerIterator layer=begin(); layer!=end(); ++layer){
+    int write_count=1;
+    int i=0;
+    for(layerIterator layer=begin(); layer!=end(); ++layer, ++i){
       std::cout << '[' << i << ']' << *layer;
       // each layer
       if(layer->channels){
@@ -436,11 +437,12 @@ private:
         if(width>0 && height>0){
           // write to file
           char path[1024];
-          sprintf(path, "%03d.ppm", i++);
+          sprintf(path, "%03d.ppm", write_count++);
           image.write_ppm(path);
-          std::cout << " ==> " << path << std::endl;
+          std::cout << " ==> " << path;
         }
       }
+      std::cout << std::endl;
     }
 
     return true;
