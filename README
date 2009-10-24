@@ -1,0 +1,9 @@
+build
+
+$ premake4 gmake
+$ make
+
+or
+
+$ g++ main.cpp 
+
