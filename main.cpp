@@ -4,17 +4,6 @@
 #include <stdarg.h>
 #include <string>
 
-std::string string_format(const char* format, ...)
-{
-  va_list ap;
-  va_start(ap, format);
-  char buf[1024];
-  vsprintf(buf, format, ap);
-  va_end(ap);
-
-  return buf;
-}
-
 enum CHANNEL_TYPE {
   CHANNEL_ALPHA,
   CHANNEL_RED,
@@ -24,6 +13,7 @@ enum CHANNEL_TYPE {
 };
 
 #define TO_SHORT(buf) (buf[0]<<8|buf[1])
+
 class Image
 {
   int width_;
@@ -77,8 +67,8 @@ public:
       break;
 
     default:
-      //assert(false);
       std::cout << "unknown compression" << std::endl;
+      assert(false);
     }
   }
 
@@ -86,7 +76,6 @@ private:
   void set_compressed_plane_(CHANNEL_TYPE channel, 
       const unsigned char *buf, const unsigned char *end)
   {
-    std::cout << "set_compressed_plane_" << std::endl;
     const unsigned char *src=buf;
 
     unsigned short line_length[height_];
@@ -424,11 +413,12 @@ private:
   {
     int i=1;
     for(layerIterator layer=begin(); layer!=end(); ++layer){
-      std::cout << *layer << std::endl;
+      std::cout << '[' << i << ']' << *layer;
       // each layer
       if(layer->channels){
-        Image image(layer->right-layer->left, 
-            layer->bottom-layer->top);
+        int width=layer->right-layer->left;
+        int height=layer->bottom-layer->top;
+        Image image(width, height);
 
         // each channel
         image.set_plane(CHANNEL_ALPHA, read_vector_(
@@ -443,12 +433,17 @@ private:
         image.set_plane(CHANNEL_BLUE, read_vector_(
               layer->channel_size[CHANNEL_BLUE]));
 
-        // write to file
-        image.write_ppm(string_format("%02d.ppm", i++));
-
-        if(i>5){
-          break;
+        if(width==0){
+          continue;
         }
+        if(height==0){
+          continue;
+        }
+        // write to file
+        char path[1024];
+        sprintf(path, "%03d.ppm", i++);
+        image.write_ppm(path);
+        std::cout << " ==> " << path << std::endl;
       }
     }
 
@@ -456,6 +451,9 @@ private:
   }
 };
 
+//----------------------------------------------------------------------------//
+// entry point
+//----------------------------------------------------------------------------//
 int main(int argc, char** argv)
 {
   if(argc<2){
