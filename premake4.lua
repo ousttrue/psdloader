@@ -11,6 +11,10 @@ kind "ConsoleApp"
 language "C++"
 files { "**.h", "**.cpp" }
 
+-- png
+defines { "USE_PNG" }
+links { "png" }
+
 configuration "Debug"
 defines { "DEBUG" }
 flags { "Symbols" }

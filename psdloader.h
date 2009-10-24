@@ -62,27 +62,11 @@ struct PSDLayer
   //------------------------------------------------------------//
   // plane channels to interleaved image
   //------------------------------------------------------------//
-  void store_to_interleaved_image(unsigned char *buf)
+  typedef unsigned char* (*CHANNEL_FUNC)(unsigned char* buf, CHANNEL_TYPE type);
+  void store_to_interleaved_image(unsigned char *buf, CHANNEL_FUNC func)
   {
     for(const PSDChannel *channel=begin(); channel!=end(); ++channel){
-      unsigned char *dst;
-      switch(channel->id)
-      {
-      case CHANNEL_RED:
-        dst=buf+0;
-        break;
-      case CHANNEL_GREEN:
-        dst=buf+1;
-        break;
-      case CHANNEL_BLUE:
-        dst=buf+2;
-        break;
-      case CHANNEL_ALPHA:
-        dst=buf+3;
-        break;
-      default:
-        assert(false);
-      }
+      unsigned char *dst=func(buf, channel->id);
 
       // each channel
       short compressed=TO_SHORT(channel->data);
