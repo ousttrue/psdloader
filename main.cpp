@@ -433,17 +433,13 @@ private:
         image.set_plane(CHANNEL_BLUE, read_vector_(
               layer->channel_size[CHANNEL_BLUE]));
 
-        if(width==0){
-          continue;
+        if(width>0 && height>0){
+          // write to file
+          char path[1024];
+          sprintf(path, "%03d.ppm", i++);
+          image.write_ppm(path);
+          std::cout << " ==> " << path << std::endl;
         }
-        if(height==0){
-          continue;
-        }
-        // write to file
-        char path[1024];
-        sprintf(path, "%03d.ppm", i++);
-        image.write_ppm(path);
-        std::cout << " ==> " << path << std::endl;
       }
     }
 
