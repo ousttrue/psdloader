@@ -1,3 +1,6 @@
+#ifndef STREAM_LOADER_H
+#define STREAM_LOADER_H
+
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -76,6 +79,11 @@ protected:
     return buf_;
   }
 
+  void read_buf_(unsigned char* buf, size_t size)
+  {
+    io_.read((char*)buf, size);
+  }
+
   unsigned short read_word_()
   {
     char buf[2];
@@ -112,4 +120,6 @@ protected:
     return io_.tellg()-start_;
   }
 };
+
+#endif // STREAM_LOADER_H
 
