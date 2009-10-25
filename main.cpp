@@ -1,5 +1,5 @@
 #include "psdloader.h"
-#include "rgbimage.h"
+#include "rgbaimage.h"
 
 //----------------------------------------------------------------------------//
 // entry point
