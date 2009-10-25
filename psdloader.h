@@ -62,8 +62,8 @@ struct PSDLayer
   //------------------------------------------------------------//
   // plane channels to interleaved image
   //------------------------------------------------------------//
-  typedef unsigned char* (*CHANNEL_FUNC)(unsigned char* buf, CHANNEL_TYPE type);
-  void store_to_interleaved_image(unsigned char *buf, CHANNEL_FUNC func)
+  template<typename ChannelMap>
+  void store_to_interleaved_image(unsigned char *buf, ChannelMap func)
   {
     for(const PSDChannel *channel=begin(); channel!=end(); ++channel){
       unsigned char *dst=func(buf, channel->id);
@@ -404,6 +404,48 @@ private:
     return true;
   }
 
+};
+
+struct ChannelMap_RGBA
+{
+  unsigned char *operator()(unsigned char* buf, CHANNEL_TYPE channel_id)
+  {
+    switch(channel_id)
+    {
+    case CHANNEL_RED:
+      return buf+0;
+    case CHANNEL_GREEN:
+      return buf+1;
+    case CHANNEL_BLUE:
+      return buf+2;
+    case CHANNEL_ALPHA:
+      return buf+3;
+    default:
+      assert(false);
+      return NULL;
+    }
+  }
+};
+
+struct ChannelMap_BRGA
+{
+  unsigned char *operator()(unsigned char* buf, CHANNEL_TYPE channel_id)
+  {
+    switch(channel_id)
+    {
+    case CHANNEL_RED:
+      return buf+2;
+    case CHANNEL_GREEN:
+      return buf+1;
+    case CHANNEL_BLUE:
+      return buf+0;
+    case CHANNEL_ALPHA:
+      return buf+3;
+    default:
+      assert(false);
+      return NULL;
+    }
+  }
 };
 
 #endif // PSD_LOADER_H
